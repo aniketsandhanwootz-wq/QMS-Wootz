@@ -1,8 +1,0 @@
-{
-  "RowID": "TEST_ROW_002",
-  "Part number": "PN-002",
-  "Qty": 3,
-  "processes": [
-    { "Unique Process ID": "PROC-010", "Process": "Cutting", "Process sequence": 1 }
-  ]
-}

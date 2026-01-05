@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-import os
-import json
 import base64
+import json
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+
+# Loads .env automatically for local dev (Render env vars still work)
+load_dotenv()
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
@@ -89,6 +93,16 @@ def a1_col(n: int) -> str:
     return s
 
 
+def uniq(seq: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for x in seq:
+        if x and x not in seen:
+            out.append(x)
+            seen.add(x)
+    return out
+
+
 def get_headers(svc, tab: str) -> List[str]:
     rows = read_range(svc, f"{tab}!1:1")
     return rows[0] if rows else []
@@ -96,6 +110,8 @@ def get_headers(svc, tab: str) -> List[str]:
 
 def ensure_columns(svc, tab: str, required: List[str]) -> List[str]:
     headers = get_headers(svc, tab)
+    required = uniq(required)
+
     if not headers:
         write_range(svc, f"{tab}!1:1", [required])
         return required
@@ -135,11 +151,6 @@ def get_row_values(svc, tab: str, row_num: int, width: int) -> List[Any]:
 
 
 def patch_row(headers: List[str], current: List[Any], payload: Dict[str, Any], mapping: Dict[str, str]) -> List[Any]:
-    """
-    Patch semantics:
-    - update only fields present in payload AND value is not None
-    - missing fields do not overwrite sheet
-    """
     out = list(current)
     for payload_key, sheet_col in mapping.items():
         if sheet_col not in headers:
@@ -149,16 +160,14 @@ def patch_row(headers: List[str], current: List[Any], payload: Dict[str, Any], m
         val = payload.get(payload_key)
         if val is None:
             continue
-        idx = headers.index(sheet_col)
-        out[idx] = val
+        out[headers.index(sheet_col)] = val
     return out
 
 
 def set_cell(headers: List[str], row: List[Any], col: str, value: Any) -> List[Any]:
     if col not in headers:
         return row
-    idx = headers.index(col)
-    row[idx] = value
+    row[headers.index(col)] = value
     return row
 
 
@@ -170,18 +179,6 @@ def get_flag(obj: Dict[str, Any], keys: List[str]) -> bool:
                 return v
             return str(v).strip().lower() in ("1", "true", "yes", "y")
     return False
-
-
-def get_processes(body: Dict[str, Any], keys: List[str]) -> List[Dict[str, Any]]:
-    for k in keys:
-        if k in body:
-            raw = body[k]
-            if raw is None:
-                return []
-            if not isinstance(raw, list):
-                raise HTTPException(status_code=400, detail=f"'{k}' must be a list")
-            return [p for p in raw if isinstance(p, dict)]
-    return []
 
 
 @app.get("/health")
@@ -210,7 +207,7 @@ async def publish(req: Request):
     proc_pk_col = keys["processes_pk_col"]
 
     delete_flag_keys = payload_cfg.get("delete_flag_keys", ["is_deleted"])
-    processes_keys = payload_cfg.get("processes_keys", ["processes"])
+    processes_key = payload_cfg.get("processes_key", "processes")
 
     main_mapping: Dict[str, str] = cfg.get("main_mapping", {})
     proc_mapping: Dict[str, str] = cfg.get("process_mapping", {})
@@ -219,175 +216,184 @@ async def publish(req: Request):
     soft_at_col = soft.get("at_col", "deleted_at")
     updated_at_col = upd.get("col", "updated_at")
 
-    # RowID in payload (must exist)
-    row_id = body.get("RowID") or body.get("row_id")
-    if not row_id:
-        raise HTTPException(status_code=400, detail="Missing RowID in payload")
-    row_id = str(row_id).strip()
+    # Glide-only: row_id is required
+    if "row_id" not in body or not str(body.get("row_id", "")).strip():
+        raise HTTPException(status_code=400, detail="Missing 'row_id' in payload")
+    row_id = str(body["row_id"]).strip()
 
     svc = sheets_service()
 
-    # Ensure headers exist (we won't auto-add by default)
-    main_headers = ensure_columns(
-        svc,
-        main_tab,
-        required=[main_pk_col] + list(set(main_mapping.values())),
-    )
-    proc_headers = ensure_columns(
-        svc,
-        proc_tab,
-        required=[proc_fk_col, proc_pk_col] + list(set(proc_mapping.values())),
-    )
+    # Ensure headers exist
+    main_required = [main_pk_col] + list(main_mapping.values())
+    main_headers = ensure_columns(svc, main_tab, required=main_required)
+
+    proc_required = [proc_fk_col, proc_pk_col] + list(proc_mapping.values())
+    proc_headers = ensure_columns(svc, proc_tab, required=proc_required)
 
     updates: List[Tuple[str, List[List[Any]]]] = []
 
     # ----------------------------
-    # MAIN: add/update/delete
+    # MAIN: add/update/soft-delete
     # ----------------------------
     main_row_num = find_row_num_by_key(svc, main_tab, main_headers, main_pk_col, row_id)
-
     main_is_deleted = get_flag(body, delete_flag_keys)
 
     if main_is_deleted:
-        # Soft delete main row if exists
         if main_row_num is not None:
-            # ensure soft cols exist if needed
             main_headers = ensure_columns(svc, main_tab, required=[soft_col, soft_at_col, updated_at_col] + main_headers)
             width = len(main_headers)
             current = get_row_values(svc, main_tab, main_row_num, width)
             current = set_cell(main_headers, current, soft_col, True)
             current = set_cell(main_headers, current, soft_at_col, now_iso())
-            current = set_cell(main_headers, current, updated_at_col, now_iso())
+            if updated_at_col:
+                current = set_cell(main_headers, current, updated_at_col, now_iso())
             rng = f"{main_tab}!A{main_row_num}:{a1_col(width)}{main_row_num}"
             updates.append((rng, [current]))
         main_action = "soft_delete"
     else:
-        # Upsert main with PATCH semantics
-        width = len(main_headers)
         if main_row_num is None:
-            # Create new row aligned to headers
+            width = len(main_headers)
             new_row = [""] * width
-            # ensure RowID written
-            if main_pk_col in main_headers:
-                new_row[main_headers.index(main_pk_col)] = row_id
-            # patch known fields
+            new_row[main_headers.index(main_pk_col)] = row_id
             new_row = patch_row(main_headers, new_row, body, main_mapping)
-            # timestamps
-            main_headers = ensure_columns(svc, main_tab, required=[updated_at_col] + main_headers) if updated_at_col else main_headers
-            if updated_at_col in main_headers:
-                # extend row if headers changed
+
+            if updated_at_col:
+                main_headers = ensure_columns(svc, main_tab, required=[updated_at_col] + main_headers)
                 width = len(main_headers)
                 new_row = (new_row + [""] * width)[:width]
                 new_row[main_headers.index(updated_at_col)] = now_iso()
+
             append_row(svc, main_tab, new_row)
             main_action = "add"
         else:
+            width = len(main_headers)
             current = get_row_values(svc, main_tab, main_row_num, width)
             patched = patch_row(main_headers, current, body, main_mapping)
-            # updated_at
+
             if updated_at_col:
                 main_headers = ensure_columns(svc, main_tab, required=[updated_at_col] + main_headers)
                 width = len(main_headers)
                 patched = (patched + [""] * width)[:width]
                 patched = set_cell(main_headers, patched, updated_at_col, now_iso())
+
             rng = f"{main_tab}!A{main_row_num}:{a1_col(width)}{main_row_num}"
             updates.append((rng, [patched]))
             main_action = "update"
 
     # ----------------------------
-    # PROCESSES: upsert + inferred deletes
+    # PROCESSES: only if provided
+    # - UID is mandatory per process
+    # - if processes provided, we do inferred deletes (sync behavior)
     # ----------------------------
-    processes = get_processes(body, processes_keys)
-
-    # Build existing map for this RowID: proc_uid -> row_num
-    proc_fk_idx = proc_headers.index(proc_fk_col)
-    proc_pk_idx = proc_headers.index(proc_pk_col)
-    proc_values = read_range(svc, f"{proc_tab}!A:ZZ")
-
-    existing_for_row: Dict[str, int] = {}
-    for row_num, row in enumerate(proc_values[1:], start=2):
-        fk = row[proc_fk_idx] if proc_fk_idx < len(row) else ""
-        if str(fk).strip() != row_id:
-            continue
-        puid = row[proc_pk_idx] if proc_pk_idx < len(row) else ""
-        puid = str(puid).strip()
-        if puid:
-            existing_for_row[puid] = row_num
-
-    incoming_uids: List[str] = []
     proc_actions = {"added": 0, "updated": 0, "deleted": 0}
 
-    # ensure soft cols exist (only if AUTO_ADD_COLUMNS=true OR already present)
-    # We will attempt to patch if present; if missing and AUTO_ADD_COLUMNS=false, it won't block.
-    if updated_at_col:
-        proc_headers = ensure_columns(svc, proc_tab, required=[updated_at_col] + proc_headers)
-    proc_headers = ensure_columns(svc, proc_tab, required=[proc_fk_col, proc_pk_col] + proc_headers)
+    processes_present = processes_key in body
+    processes_raw = body.get(processes_key, None)
 
-    for p in processes:
-        # We accept Unique Process ID in payload as either "Unique Process ID" or "process_uid"
-        puid = p.get("Unique Process ID") or p.get("unique_process_id") or p.get("process_uid")
-        if not puid:
-            continue
-        puid = str(puid).strip()
-        incoming_uids.append(puid)
-
-        # allow process-level is_deleted
-        p_is_deleted = get_flag(p, delete_flag_keys)
-
-        # ensure FK present
-        p = dict(p)
-        p["RowID"] = row_id
-        p["Unique Process ID"] = puid
-
-        if puid in existing_for_row:
-            rnum = existing_for_row[puid]
-            width = len(proc_headers)
-            current = get_row_values(svc, proc_tab, rnum, width)
-            patched = patch_row(proc_headers, current, p, proc_mapping)
-            if p_is_deleted and soft_col in proc_headers:
-                patched = set_cell(proc_headers, patched, soft_col, True)
-            if p_is_deleted and soft_at_col in proc_headers:
-                patched = set_cell(proc_headers, patched, soft_at_col, now_iso())
-            if updated_at_col and updated_at_col in proc_headers:
-                patched = set_cell(proc_headers, patched, updated_at_col, now_iso())
-            rng = f"{proc_tab}!A{rnum}:{a1_col(width)}{rnum}"
-            updates.append((rng, [patched]))
-            proc_actions["updated"] += 1
+    if processes_present:
+        if processes_raw is None:
+            processes: List[Dict[str, Any]] = []
+        elif not isinstance(processes_raw, list):
+            raise HTTPException(status_code=400, detail=f"'{processes_key}' must be a list")
         else:
-            # append new row
-            width = len(proc_headers)
-            new_row = [""] * width
-            # set FK + PK
-            new_row[proc_headers.index(proc_fk_col)] = row_id
-            new_row[proc_headers.index(proc_pk_col)] = puid
-            new_row = patch_row(proc_headers, new_row, p, proc_mapping)
-            if p_is_deleted and soft_col in proc_headers:
-                new_row = set_cell(proc_headers, new_row, soft_col, True)
-            if p_is_deleted and soft_at_col in proc_headers:
-                new_row = set_cell(proc_headers, new_row, soft_at_col, now_iso())
-            if updated_at_col and updated_at_col in proc_headers:
-                new_row = set_cell(proc_headers, new_row, updated_at_col, now_iso())
-            append_row(svc, proc_tab, new_row)
-            proc_actions["added"] += 1
+            processes = [p for p in processes_raw if isinstance(p, dict)]
 
-    # inferred deletes: existing - incoming
-    removed = set(existing_for_row.keys()) - set(incoming_uids)
-    if removed:
-        # only soft delete if those columns exist (or AUTO_ADD_COLUMNS=true)
-        proc_headers = ensure_columns(svc, proc_tab, required=[soft_col, soft_at_col] + proc_headers) if AUTO_ADD_COLUMNS else proc_headers
-        for puid in removed:
-            rnum = existing_for_row[puid]
-            width = len(proc_headers)
-            current = get_row_values(svc, proc_tab, rnum, width)
-            if soft_col in proc_headers:
-                current = set_cell(proc_headers, current, soft_col, True)
-            if soft_at_col in proc_headers:
-                current = set_cell(proc_headers, current, soft_at_col, now_iso())
-            if updated_at_col and updated_at_col in proc_headers:
-                current = set_cell(proc_headers, current, updated_at_col, now_iso())
-            rng = f"{proc_tab}!A{rnum}:{a1_col(width)}{rnum}"
-            updates.append((rng, [current]))
-            proc_actions["deleted"] += 1
+        # Existing map for this row: UID -> row_num
+        proc_fk_idx = proc_headers.index(proc_fk_col)
+        proc_pk_idx = proc_headers.index(proc_pk_col)
+        proc_values = read_range(svc, f"{proc_tab}!A:ZZ")
+
+        existing_for_row: Dict[str, int] = {}
+        for row_num, row in enumerate(proc_values[1:], start=2):
+            fk = row[proc_fk_idx] if proc_fk_idx < len(row) else ""
+            if str(fk).strip() != row_id:
+                continue
+            uid = row[proc_pk_idx] if proc_pk_idx < len(row) else ""
+            uid = str(uid).strip()
+            if uid:
+                existing_for_row[uid] = row_num
+
+        incoming_uids: List[str] = []
+
+        # Make sure timestamps columns exist if you want them
+        if updated_at_col:
+            proc_headers = ensure_columns(svc, proc_tab, required=[updated_at_col] + proc_headers)
+
+        for p in processes:
+            if "UID" not in p or not str(p.get("UID", "")).strip():
+                raise HTTPException(status_code=400, detail="Each process must include non-empty 'UID'")
+
+            uid = str(p["UID"]).strip()
+            incoming_uids.append(uid)
+
+            p_is_deleted = get_flag(p, delete_flag_keys)
+
+            # Inject FK/PK for sheet write
+            payload_p = dict(p)
+            payload_p["row_id"] = row_id  # mapped to 🔒 Row ID
+            payload_p["UID"] = uid        # mapped to UID column
+
+            if uid in existing_for_row:
+                rnum = existing_for_row[uid]
+                width = len(proc_headers)
+                current = get_row_values(svc, proc_tab, rnum, width)
+                patched = patch_row(proc_headers, current, payload_p, proc_mapping)
+
+                # soft delete if requested
+                if p_is_deleted:
+                    proc_headers = ensure_columns(svc, proc_tab, required=[soft_col, soft_at_col] + proc_headers)
+                    width = len(proc_headers)
+                    patched = (patched + [""] * width)[:width]
+                    if soft_col in proc_headers:
+                        patched = set_cell(proc_headers, patched, soft_col, True)
+                    if soft_at_col in proc_headers:
+                        patched = set_cell(proc_headers, patched, soft_at_col, now_iso())
+
+                if updated_at_col and updated_at_col in proc_headers:
+                    patched = set_cell(proc_headers, patched, updated_at_col, now_iso())
+
+                rng = f"{proc_tab}!A{rnum}:{a1_col(len(proc_headers))}{rnum}"
+                updates.append((rng, [patched]))
+                proc_actions["updated"] += 1
+            else:
+                width = len(proc_headers)
+                new_row = [""] * width
+                new_row[proc_headers.index(proc_fk_col)] = row_id
+                new_row[proc_headers.index(proc_pk_col)] = uid
+                new_row = patch_row(proc_headers, new_row, payload_p, proc_mapping)
+
+                if p_is_deleted:
+                    proc_headers = ensure_columns(svc, proc_tab, required=[soft_col, soft_at_col] + proc_headers)
+                    width = len(proc_headers)
+                    new_row = (new_row + [""] * width)[:width]
+                    if soft_col in proc_headers:
+                        new_row = set_cell(proc_headers, new_row, soft_col, True)
+                    if soft_at_col in proc_headers:
+                        new_row = set_cell(proc_headers, new_row, soft_at_col, now_iso())
+
+                if updated_at_col and updated_at_col in proc_headers:
+                    new_row = set_cell(proc_headers, new_row, updated_at_col, now_iso())
+
+                append_row(svc, proc_tab, new_row)
+                proc_actions["added"] += 1
+
+        # inferred deletes (sync): existing - incoming
+        removed = set(existing_for_row.keys()) - set(incoming_uids)
+        if removed:
+            proc_headers = ensure_columns(svc, proc_tab, required=[soft_col, soft_at_col] + proc_headers) if AUTO_ADD_COLUMNS else proc_headers
+            for uid in removed:
+                rnum = existing_for_row[uid]
+                width = len(proc_headers)
+                current = get_row_values(svc, proc_tab, rnum, width)
+                if soft_col in proc_headers:
+                    current = set_cell(proc_headers, current, soft_col, True)
+                if soft_at_col in proc_headers:
+                    current = set_cell(proc_headers, current, soft_at_col, now_iso())
+                if updated_at_col and updated_at_col in proc_headers:
+                    current = set_cell(proc_headers, current, updated_at_col, now_iso())
+                rng = f"{proc_tab}!A{rnum}:{a1_col(width)}{rnum}"
+                updates.append((rng, [current]))
+                proc_actions["deleted"] += 1
 
     # Apply all updates at once
     if updates:

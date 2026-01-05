@@ -6,90 +6,61 @@ tabs:
 keys:
   main_pk_col: "🔒 Row ID"
   processes_fk_col: "🔒 Row ID"
-  processes_pk_col: "Unique Process ID"
+  processes_pk_col: "UID"   # <-- IMPORTANT: rename/add this column in Processes sheet
 
-# If you want auto-add columns later, set true in .env instead
 soft_delete:
   col: "is_deleted"
   at_col: "deleted_at"
+
 updated_at:
   col: "updated_at"
 
-# Where processes list comes in payload
 payload:
-  processes_keys: ["processes", "Processes", "process_list", "ProcessList"]
-  delete_flag_keys: ["is_deleted", "deleted", "isDeleted", "_deleted"]
+  processes_key: "processes"
+  delete_flag_keys: ["is_deleted"]
 
-# Payload key -> Sheet column header mapping
+# Glide payload key -> Sheet column header
 main_mapping:
-  RowID: "🔒 Row ID"
-  Part number: "Part number"
-  Part name: "Part name"
-  Qty: "Qty"
-  Supplier: "Supplier"
-  Unique ID: "Unique ID"
-  Created by: "Created by"
-  Created at: "Created at"
-  Drawing: "Drawing"
-  Drawing URL: "Drawing"
-  Approved drawing: "Approved drawing"
-  Master drawing Supplier: "Master drawing Supplier"
-  Dwg approval: "Dwg approval"
-  Dwg approval sent timestamp: "Dwg approval sent timestamp"
-  Dwg approved by: "Dwg approved by"
-  Dwg approval received timestamp: "Dwg approval received timestamp"
-  Dwg approval sent by: "Dwg approval sent by"
-  Proect name: "Proect name"
+  row_id: "🔒 Row ID"
+  item_number: "Part number"
+  item_name: "Part name"
+  qty: "Qty"
+  supplier: "Supplier"   # optional (only if Glide sends it)
 
 process_mapping:
-  RowID: "🔒 Row ID"
-  Process Assembly ID: "Process Assembly ID"
-  ID: "ID"
-  Heat ID: "Heat ID"
-  Process: "Process"
-  Process sequence: "Process sequence"
-  RM level tracking: "RM level tracking"
-  Unique ID : "Unique ID"
-  Unique Process ID: "Unique Process ID"
-  Allow creation: "Allow creation"
-  Supplier: "Supplier"
+  row_id: "🔒 Row ID"
+  UID: "UID"
+  Process show: "Process"
+  Sequence: "Process sequence"
 
-  Report 1 type: "Report 1 type"
-  Frequency report 1: "Frequency report 1"
-  Mandatory report 1: "Mandatory report 1"
-  Report 1 responsibility: "Report 1 responsibility"
+  Report 1: "Report 1 type"
+  Report 1 frequency: "Frequency report 1"
+  Report 1 mandatory: "Mandatory report 1"
 
-  Report 2 type: "Report 2 type"
-  Frequency report 2: "Frequency report 2"
-  Mandatory report 2: "Mandatory report 2"
-  Report 2 responsibility: "Report 2 responsibility"
+  Report 2: "Report 2 type"
+  Report 2 frequency: "Frequency report 2"
+  Report 2 mandatory: "Mandatory report 2"
 
-  Report 3 type: "Report 3 type"
-  Frequency report 3: "Frequency report 3"
-  Mandatory report 3: "Mandatory report 3"
-  Report 3 responsibility: "Report 3 responsibility"
+  Report 3: "Report 3 type"
+  Report 3 frequency: "Frequency report 3"
+  Report 3 mandatory: "Mandatory report 3"
 
-  Report 4 type: "Report 4 type"
-  Frequency report 4: "Frequency report 4"
-  Mandatory report 4: "Mandatory report 4"
-  Report 4 responsibility: "Report 4 responsibility"
+  Report 4: "Report 4 type"
+  Report 4 frequency: "Frequency report 4"
+  Report 4 mandatory: "Mandatory report 4"
 
-  Report 5 type: "Report 5 type"
-  Frequency report 5: "Frequency report 5"
-  Mandatory report 5: "Mandatory report 5"
-  Report 5 responsibility: "Report 5 responsibility"
+  Report 5: "Report 5 type"
+  Report 5 frequency: "Frequency report 5"
+  Report 5 mandatory: "Mandatory report 5"
 
-  Report 6 type: "Report 6 type"
-  Frequency report 6: "Frequency report 6"
-  Mandatory report 6: "Mandatory report 6"
-  Report 6 responsibility: "Report 6 responsibility"
+  Report 6: "Report 6 type"
+  Report 6 frequency: "Frequency report 6"
+  Report 6 mandatory: "Mandatory report 6"
 
-  Report 7 type: "Report 7 type"
-  Frequency report 7: "Frequency report 7"
-  Mandatory report 7: "Mandatory report 7"
-  Report 7 responsibility: "Report 7 responsibility"
+  Report 7: "Report 7 type"
+  Report 7 frequency: "Frequency report 7"
+  Report 7 mandatory: "Mandatory report 7"
 
-  Report 8 type: "Report 8 type"
-  Frequency report 8: "Frequency report 8"
-  Mandatory report 8: "Mandatory report 8"
-  Report 8 responsibility: "Report 8 responsibility"
+  Report 8: "Report 8 type"
+  Report 8 frequency: "Frequency report 8"
+  Report 8 mandatory: "Mandatory report 8"
