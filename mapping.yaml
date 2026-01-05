@@ -30,7 +30,7 @@ main_mapping:
 process_mapping:
   row_id: "🔒 Row ID"
   UID: "UID"
-  Process show: "Process"
+  Process : "Process"
   Sequence: "Process sequence"
 
   Report 1: "Report 1 type"
