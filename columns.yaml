@@ -1,0 +1,71 @@
+# Key in payload where processes list lives
+processes_payload_key: "processes"
+
+main:
+  row_id_payload_key: "RowID"        # payload key
+  row_id_sheet_col: "RowID"          # sheet header col name
+
+  updated_at_col: "updated_at"
+  deleted_col: "is_deleted"
+  deleted_at_col: "deleted_at"
+
+  # payload_key -> sheet_column_header
+  mapping:
+    RowID: "RowID"
+    Qty: "Qty"
+    Part Number: "Part Number"
+    Vendor: "Vendor"
+    Drawing URL: "Drawing URL"
+
+sub:
+  # payload key that contains unique process id
+  process_id_payload_key: "process_uid"
+
+  # sheet header columns
+  process_id_sheet_col: "process_uid"
+  row_id_sheet_col: "RowID"
+
+  updated_at_col: "updated_at"
+  deleted_col: "is_deleted"
+  deleted_at_col: "deleted_at"
+
+  # payload_key -> sheet_column_header
+  # NOTE: We store RowID in sub tab too (FK), we inject it automatically.
+  mapping:
+    RowID: "RowID"
+    process_uid: "process_uid"
+    Process: "Process"
+    Sequence: "Sequence"
+
+    # Report 1..8 fields (rename freely here)
+    Report 1: "Report 1"
+    Report 1 freq: "Report 1 freq"
+    Report 1 mandatory: "Report 1 mandatory"
+
+    Report 2: "Report 2"
+    Report 2 freq: "Report 2 freq"
+    Report 2 mandatory: "Report 2 mandatory"
+
+    Report 3: "Report 3"
+    Report 3 freq: "Report 3 freq"
+    Report 3 mandatory: "Report 3 mandatory"
+
+    Report 4: "Report 4"
+    Report 4 freq: "Report 4 freq"
+    Report 4 mandatory: "Report 4 mandatory"
+
+    Report 5: "Report 5"
+    Report 5 freq: "Report 5 freq"
+    Report 5 mandatory: "Report 5 mandatory"
+
+    Report 6: "Report 6"
+    Report 6 freq: "Report 6 freq"
+    Report 6 mandatory: "Report 6 mandatory"
+
+    Report 7: "Report 7"
+    Report 7 freq: "Report 7 freq"
+    Report 7 mandatory: "Report 7 mandatory"
+
+    Report 8: "Report 8"
+    Report 8 freq: "Report 8 freq"
+    Report 8 mandatory: "Report 8 mandatory"
