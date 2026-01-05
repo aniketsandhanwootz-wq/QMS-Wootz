@@ -1,5 +1,9 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
+PyYAML==6.0.2
+
 google-api-python-client==2.141.0
 google-auth==2.34.0
-PyYAML==6.0.2
+google-auth-httplib2==0.2.0
+
+python-dotenv==1.0.0

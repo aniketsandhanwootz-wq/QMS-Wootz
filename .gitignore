@@ -13,6 +13,5 @@ coverage/
 *.sqlite3
 *.egg-info/
 .mypy_cache/
+qms-wootz-fb7450cacf4b.json
 
-
-        
