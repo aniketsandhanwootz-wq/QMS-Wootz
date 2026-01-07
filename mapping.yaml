@@ -26,6 +26,7 @@ main_mapping:
   item_name: "Part name"
   qty: "Qty"
   supplier: "Supplier"   # optional (only if Glide sends it)
+  assembly_drawing: "Drawing"
 
 process_mapping:
   row_id: "🔒 Row ID"
