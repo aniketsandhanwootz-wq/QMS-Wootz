@@ -351,6 +351,10 @@ async def publish(req: Request):
             
             # PK for Processes (7-digit) -> goes into proc_pk_col (now 🔒 Row ID)
             proc_row_pk = str(p.get("_proc_row_id", "")).strip()
+            # Process Assembly ID (separate unique ID stored in sheet column "Process Assembly ID")
+            process_assembly_id = str(p.get("process_assembly_id", "")).strip()
+            if not process_assembly_id:
+                process_assembly_id = gen_alnum_id(12)
             if not proc_row_pk:
                 proc_row_pk = gen_alnum_id(7)
             
@@ -358,11 +362,18 @@ async def publish(req: Request):
             payload_p["row_id"] = row_id          # mapped to ID column (FK)
             payload_p["UID"] = uid                # mapped to UID column (optional data)
             payload_p["_proc_row_id"] = proc_row_pk  # internal key (will be written via proc_pk_col)
+            payload_p["process_assembly_id"] = process_assembly_id  # <-- ADD THIS LINE
 
             if uid in existing_for_row:
                 rnum = existing_for_row[uid]
                 width = len(proc_headers)
                 current = get_row_values(svc, proc_tab, rnum, width)
+                # Preserve existing Process Assembly ID if already set in sheet
+                if "Process Assembly ID" in proc_headers:
+                    idx_pa = proc_headers.index("Process Assembly ID")
+                    existing_pa = current[idx_pa] if idx_pa < len(current) else ""
+                    if str(existing_pa).strip():
+                        payload_p["process_assembly_id"] = str(existing_pa).strip()
                 patched = patch_row(proc_headers, current, payload_p, proc_mapping)
 
                 # soft delete if requested
