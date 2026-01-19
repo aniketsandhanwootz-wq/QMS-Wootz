@@ -30,7 +30,12 @@ app = FastAPI(title="QMS Publish Service")
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
+def gen_alnum_id(length: int = 7) -> str:
+    # Uppercase alphanumeric, collision-resistant enough for Sheets use
+    import secrets
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    return "".join(secrets.choice(alphabet) for _ in range(length))
+    
 def load_mapping() -> dict:
     with open(MAPPING_PATH, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -314,18 +319,21 @@ async def publish(req: Request):
 
         # Existing map for this row: UID -> row_num
         proc_fk_idx = proc_headers.index(proc_fk_col)
-        proc_pk_idx = proc_headers.index(proc_pk_col)
+        if "UID" not in proc_headers:
+            raise HTTPException(status_code=400, detail="Processes tab missing required column 'UID'")
+        proc_uid_idx = proc_headers.index("UID")
+        
         proc_values = read_range(svc, f"{proc_tab}!A:ZZ")
-
+        
         existing_for_row: Dict[str, int] = {}
         for row_num, row in enumerate(proc_values[1:], start=2):
             fk = row[proc_fk_idx] if proc_fk_idx < len(row) else ""
             if str(fk).strip() != row_id:
                 continue
-            uid = row[proc_pk_idx] if proc_pk_idx < len(row) else ""
-            uid = str(uid).strip()
-            if uid:
-                existing_for_row[uid] = row_num
+            uid_cell = row[proc_uid_idx] if proc_uid_idx < len(row) else ""
+            uid_cell = str(uid_cell).strip()
+            if uid_cell:
+                existing_for_row[uid_cell] = row_num
 
         incoming_uids: List[str] = []
 
@@ -339,13 +347,17 @@ async def publish(req: Request):
 
             uid = str(p["UID"]).strip()
             incoming_uids.append(uid)
-
             p_is_deleted = get_flag(p, delete_flag_keys)
-
-            # Inject FK/PK for sheet write
+            
+            # PK for Processes (7-digit) -> goes into proc_pk_col (now 🔒 Row ID)
+            proc_row_pk = str(p.get("_proc_row_id", "")).strip()
+            if not proc_row_pk:
+                proc_row_pk = gen_alnum_id(7)
+            
             payload_p = dict(p)
-            payload_p["row_id"] = row_id  # mapped to 🔒 Row ID
-            payload_p["UID"] = uid        # mapped to UID column
+            payload_p["row_id"] = row_id          # mapped to ID column (FK)
+            payload_p["UID"] = uid                # mapped to UID column (optional data)
+            payload_p["_proc_row_id"] = proc_row_pk  # internal key (will be written via proc_pk_col)
 
             if uid in existing_for_row:
                 rnum = existing_for_row[uid]
@@ -372,8 +384,8 @@ async def publish(req: Request):
             else:
                 width = len(proc_headers)
                 new_row = [""] * width
-                new_row[proc_headers.index(proc_fk_col)] = row_id
-                new_row[proc_headers.index(proc_pk_col)] = uid
+                new_row[proc_headers.index(proc_fk_col)] = row_id        # goes to "ID"
+                new_row[proc_headers.index(proc_pk_col)] = proc_row_pk   # goes to "🔒 Row ID" (7-digit)
                 new_row = patch_row(proc_headers, new_row, payload_p, proc_mapping)
 
                 if p_is_deleted:
