@@ -34,6 +34,7 @@ process_mapping:
   UID: "UID"
   Process: "Process"
   Sequence: "Process sequence"
+  process_assembly_id: "Process Assembly ID"   # <-- ADD THIS LINE
 
   Report 1: "Report 1 type"
   Report 1 frequency: "Frequency report 1"
