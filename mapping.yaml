@@ -5,8 +5,8 @@ tabs:
 # Key columns in the SHEET (headers)
 keys:
   main_pk_col: "🔒 Row ID"
-  processes_fk_col: "🔒 Row ID"
-  processes_pk_col: "UID"   # <-- IMPORTANT: rename/add this column in Processes sheet
+  processes_fk_col: "ID"
+  processes_pk_col: "🔒 Row ID"   # <-- IMPORTANT: rename/add this column in Processes sheet
 
 soft_delete:
   col: "is_deleted"
@@ -32,7 +32,7 @@ main_mapping:
 process_mapping:
   row_id: "ID"
   UID: "UID"
-  Process : "Process"
+  Process: "Process"
   Sequence: "Process sequence"
 
   Report 1: "Report 1 type"
