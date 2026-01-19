@@ -289,12 +289,26 @@ async def publish(req: Request):
 
     processes_present = processes_key in body
     processes_raw = body.get(processes_key, None)
-
+    
+    # Glide sends processes as a JSON-encoded string like "[{\"Process\":...}]"
+    if processes_present and isinstance(processes_raw, str):
+        s = processes_raw.strip()
+        if not s:
+            processes_raw = []
+        else:
+            try:
+                processes_raw = json.loads(s, strict=False) # convert string -> list[dict]
+            except json.JSONDecodeError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid JSON in '{processes_key}' string: {e}",
+                )
+    
     if processes_present:
         if processes_raw is None:
             processes: List[Dict[str, Any]] = []
         elif not isinstance(processes_raw, list):
-            raise HTTPException(status_code=400, detail=f"'{processes_key}' must be a list")
+            raise HTTPException(status_code=400, detail=f"'{processes_key}' must be a list (or JSON string)")
         else:
             processes = [p for p in processes_raw if isinstance(p, dict)]
 
