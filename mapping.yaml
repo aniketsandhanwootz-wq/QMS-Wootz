@@ -30,7 +30,7 @@ main_mapping:
   project: "Project name"
   
 process_mapping:
-  row_id: "🔒 Row ID"
+  row_id: "ID"
   UID: "UID"
   Process : "Process"
   Sequence: "Process sequence"
