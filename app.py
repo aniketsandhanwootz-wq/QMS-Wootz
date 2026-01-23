@@ -359,6 +359,9 @@ async def publish(req: Request):
                 proc_row_pk = gen_alnum_id(7)
             
             payload_p = dict(p)
+            # If main payload has supplier, copy it to process-level supplier (unless already provided per-process)
+            if "supplier" in body and "supplier" not in payload_p:
+                payload_p["supplier"] = body.get("supplier")
             payload_p["row_id"] = row_id          # mapped to ID column (FK)
             payload_p["UID"] = uid                # mapped to UID column (optional data)
             payload_p["_proc_row_id"] = proc_row_pk  # internal key (will be written via proc_pk_col)
