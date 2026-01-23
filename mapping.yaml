@@ -32,6 +32,7 @@ main_mapping:
 process_mapping:
   row_id: "ID"
   UID: "UID"
+  supplier: "Supplier"
   Process: "Process"
   Sequence: "Process sequence"
   process_assembly_id: "Process Assembly ID"   # <-- ADD THIS LINE
