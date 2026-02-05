@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
-
+from functools import lru_cache
 import yaml
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -36,9 +36,10 @@ def gen_alnum_id(length: int = 7) -> str:
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     return "".join(secrets.choice(alphabet) for _ in range(length))
     
+@lru_cache(maxsize=1)
 def load_mapping() -> dict:
     with open(MAPPING_PATH, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        return yaml.safe_load(f) or {}
 
 
 def load_sa_info() -> dict:
@@ -51,17 +52,41 @@ def load_sa_info() -> dict:
     raise RuntimeError("Missing GOOGLE_SERVICE_ACCOUNT_JSON_PATH or GOOGLE_SERVICE_ACCOUNT_JSON_B64")
 
 
+@lru_cache(maxsize=1)
 def sheets_service():
     if not GOOGLE_SHEET_ID:
         raise RuntimeError("Missing GOOGLE_SHEET_ID")
     creds = Credentials.from_service_account_info(load_sa_info(), scopes=SCOPES)
-    return build("sheets", "v4", credentials=creds)
+    # Avoid discovery caching overhead
+    return build("sheets", "v4", credentials=creds, cache_discovery=False)
 
 
 def read_range(svc, rng: str) -> List[List[Any]]:
     res = svc.spreadsheets().values().get(spreadsheetId=GOOGLE_SHEET_ID, range=rng).execute()
     return res.get("values", [])
 
+import re
+
+_COL_RANGE_RE = re.compile(r"^[^!]+!([A-Z]+)\d+:")
+
+def batch_get_columns(svc, tab: str, col_letters: List[str], start_row: int = 2) -> Dict[str, List[Any]]:
+    ranges = [f"{tab}!{col}{start_row}:{col}" for col in col_letters]
+    res = svc.spreadsheets().values().batchGet(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        ranges=ranges,
+        majorDimension="COLUMNS",
+    ).execute()
+
+    out: Dict[str, List[Any]] = {c: [] for c in col_letters}
+    for vr in res.get("valueRanges", []):
+        r = vr.get("range", "")  # e.g. "Processes!AA2:AA"
+        m = _COL_RANGE_RE.match(r)
+        if not m:
+            continue
+        col = m.group(1)  # "AA"
+        values = vr.get("values", [])
+        out[col] = values[0] if values else []
+    return out
 
 def write_range(svc, rng: str, values: List[List[Any]]):
     svc.spreadsheets().values().update(
@@ -71,6 +96,15 @@ def write_range(svc, rng: str, values: List[List[Any]]):
         body={"values": values},
     ).execute()
 
+def append_rows(svc, tab: str, rows: List[List[Any]]):
+    # Appends multiple rows in ONE write request
+    svc.spreadsheets().values().append(
+        spreadsheetId=GOOGLE_SHEET_ID,
+        range=f"{tab}!A:A",
+        valueInputOption="RAW",
+        insertDataOption="INSERT_ROWS",
+        body={"values": rows},
+    ).execute()
 
 def append_row(svc, tab: str, values: List[Any]):
     svc.spreadsheets().values().append(
@@ -134,17 +168,31 @@ def ensure_columns(svc, tab: str, required: List[str]) -> List[str]:
     return headers
 
 
-def find_row_num_by_key(svc, tab: str, headers: List[str], key_col: str, key_value: str) -> Optional[int]:
+def find_row_num_by_key(
+    svc,
+    tab: str,
+    headers: List[str],
+    key_col: str,
+    key_value: str
+) -> Optional[int]:
+    """
+    Find row number (1-indexed) by scanning ONLY the key column.
+    Avoids reading the entire sheet (A:ZZ), preventing OOM.
+    """
     if key_col not in headers:
         raise HTTPException(status_code=400, detail=f"Key column '{key_col}' not found in tab '{tab}'")
 
-    key_idx = headers.index(key_col)
-    values = read_range(svc, f"{tab}!A:ZZ")  # includes header
+    key_idx = headers.index(key_col)  # 0-based column index
+    key_letter = a1_col(key_idx + 1)  # convert to A1 letter
 
-    for row_num, row in enumerate(values[1:], start=2):
-        cell = row[key_idx] if key_idx < len(row) else ""
-        if str(cell).strip() == str(key_value).strip():
-            return row_num
+    # Read only key column values starting from row 2 (skip header)
+    cols = batch_get_columns(svc, tab, [key_letter], start_row=2)
+    key_col_vals = cols.get(key_letter, [])
+
+    needle = str(key_value).strip()
+    for i, cell in enumerate(key_col_vals, start=2):  # i is actual sheet row number
+        if str(cell).strip() == needle:
+            return i
     return None
 
 
@@ -323,16 +371,25 @@ async def publish(req: Request):
             raise HTTPException(status_code=400, detail="Processes tab missing required column 'UID'")
         proc_uid_idx = proc_headers.index("UID")
         
-        proc_values = read_range(svc, f"{proc_tab}!A:ZZ")
-        
+        # Read ONLY FK (ID) + UID columns from Processes starting row 2
+        fk_letter = a1_col(proc_fk_idx + 1)
+        uid_letter = a1_col(proc_uid_idx + 1)
+
+        cols = batch_get_columns(svc, proc_tab, [fk_letter, uid_letter], start_row=2)
+        fk_vals = cols.get(fk_letter, [])
+        uid_vals = cols.get(uid_letter, [])
+
+        # Build existing UID -> row_num mapping for only this row_id
         existing_for_row: Dict[str, int] = {}
-        for row_num, row in enumerate(proc_values[1:], start=2):
-            fk = row[proc_fk_idx] if proc_fk_idx < len(row) else ""
+        max_len = max(len(fk_vals), len(uid_vals))
+        for offset in range(max_len):
+            fk = fk_vals[offset] if offset < len(fk_vals) else ""
             if str(fk).strip() != row_id:
                 continue
-            uid_cell = row[proc_uid_idx] if proc_uid_idx < len(row) else ""
+            uid_cell = uid_vals[offset] if offset < len(uid_vals) else ""
             uid_cell = str(uid_cell).strip()
             if uid_cell:
+                row_num = 2 + offset  # since we started reading at row 2
                 existing_for_row[uid_cell] = row_num
 
         incoming_uids: List[str] = []
@@ -340,6 +397,8 @@ async def publish(req: Request):
         # Make sure timestamps columns exist if you want them
         if updated_at_col:
             proc_headers = ensure_columns(svc, proc_tab, required=[updated_at_col] + proc_headers)
+
+        new_proc_rows: List[List[Any]] = []
 
         for p in processes:
             if "UID" not in p or not str(p.get("UID", "")).strip():
@@ -414,9 +473,13 @@ async def publish(req: Request):
                 if updated_at_col and updated_at_col in proc_headers:
                     new_row = set_cell(proc_headers, new_row, updated_at_col, now_iso())
 
-                append_row(svc, proc_tab, new_row)
+                new_proc_rows.append(new_row)
                 proc_actions["added"] += 1
 
+        if new_proc_rows:
+            CHUNK = 200  # tune 100-500; 200 is safe
+            for i in range(0, len(new_proc_rows), CHUNK):
+                append_rows(svc, proc_tab, new_proc_rows[i:i+CHUNK])
         # inferred deletes (sync): existing - incoming
         removed = set(existing_for_row.keys()) - set(incoming_uids)
         if removed:

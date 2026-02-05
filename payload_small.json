@@ -1,0 +1,9 @@
+{
+  "row_id": "TEST-OOM-BURST-001",
+  "item_number": "PN-001",
+  "item_name": "Test Part",
+  "qty": 5,
+  "supplier": "Test Supplier",
+  "project": "Test Project",
+  "processes": "[{\"UID\":\"U1\",\"Process\":\"Cut\",\"Sequence\":1},{\"UID\":\"U2\",\"Process\":\"Weld\",\"Sequence\":2}]"
+}
