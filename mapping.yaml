@@ -28,6 +28,8 @@ main_mapping:
   supplier: "Supplier"   # optional (only if Glide sends it)
   assembly_drawing: "Drawing"
   project: "Project name"
+  internal_poc: "internal poc"
+  quality_poc: "quality poc"
   
 process_mapping:
   row_id: "ID"
